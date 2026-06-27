@@ -1,0 +1,106 @@
+# ============================================================
+# .gitignore — Lovon Agente
+# ============================================================
+
+# ---- Variáveis de ambiente e segredos ----
+.env
+.env.local
+.env.development
+.env.production
+.env.*.local
+*.pem
+*.key
+*.crt
+secrets/
+
+# ---- Dependências ----
+node_modules/
+.pnp/
+.pnp.js
+
+# ---- Builds e caches ----
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+.next-cache/
+
+# ---- Banco de dados (binários) ----
+db/*.db
+db/*.sqlite
+db/*.sqlite3
+*.db
+*.sqlite
+*.sqlite3
+
+# ---- Logs ----
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+dev.log
+server.log
+
+# ---- Runtime / process state ----
+.pid
+.pid.lock
+*.pid
+
+# ---- Cobertura e testes ----
+coverage/
+.nyc_output/
+
+# ---- Editor / OS ----
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ---- Backups / arquivos compactados locais ----
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.rar
+*.bak
+*.tmp
+*.orig
+
+# ---- Pastas locais que NÃO são parte do projeto ----
+# Workspace do bolt.diy (não versionar)
+workspace-*/
+# Versões alternativas do deploy (duplicatas idênticas)
+lovon-flat/
+lovon-html-fix/
+
+# ---- Next.js / React ----
+.next/
+next-env.d.ts
+
+# ---- Prisma ----
+prisma/*.db
+prisma/*.db-journal
+
+# ---- Vercel / Deploy ----
+.vercel
+now.json
+.turbo
+
+# ---- Misc ----
+*.tsbuildinfo
+.eslintcache
+.cache/
+.parcel-cache/
