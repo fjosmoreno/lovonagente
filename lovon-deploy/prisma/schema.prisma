@@ -1,0 +1,188 @@
+// Lovon Agente - Multi-tenant SaaS platform
+// Migrado de SQLite → PostgreSQL para deploy serverless (Vercel)
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String   @id @default(cuid())
+  email           String   @unique
+  name            String
+  passwordHash    String
+  emailVerified   Boolean  @default(false)
+  verifyCode      String?
+  verifyCodeExp   DateTime?
+  resetToken      String?
+  resetTokenExp   DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  agent           Agent?
+  conversations   Conversation[]
+  leads           Lead[]
+}
+
+model Agent {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Lovon profile
+  lovonUrl        String?
+  handle          String?  @unique
+  // Persona
+  personaName     String   @default("Lovon")
+  personaRole     String   @default("Especialista Digital")
+  personaDesc     String   @default("")
+  personaStyle    String   @default("amigavel") // amigavel, profissional, casual, tecnico, inspirador, divertido
+  personaEmotion  String   @default("neutro")   // neutro, entusiasta, calmo
+  creativity      String   @default("media")    // baixa, media, alta
+  languages       String   @default("pt")      // comma separated: pt,en,es
+  // Visual
+  primaryColor    String   @default("#FF6600")
+  forcedTheme     String   @default("system") // system, dark, light
+  avatarBase64    String?
+  heroImage       String?
+  widgetText      String   @default("")
+  // AI mode
+  aiMode          String   @default("restrito") // restrito, hibrido, corporativo
+  leadCapture     Boolean  @default(true)
+  // PIX
+  pixEnabled      Boolean  @default(false)
+  pixAmount       Float    @default(0)
+  pixKey          String?
+  pixReceiverName String?
+  pixBank         String?
+  pixWhatsapp     String?
+  pixSuccessMsg   String   @default("Pagamento confirmado! Aqui está meu WhatsApp: {whatsapp}")
+  pixInstructions String   @default("Para liberar o contato, faça um PIX de R$ {valor} para a chave {chave} ({nome}). Após pagar, envie o comprovante aqui.")
+  // VIP
+  vipEnabled      Boolean  @default(false)
+  vipTriggerMsg   String   @default("")
+  vipPhrase       String   @default("")
+  // Webhook / notifications
+  webhookUrl      String?
+  // Stats
+  totalChats      Int      @default(0)
+  totalMessages   Int      @default(0)
+  totalVisitors   Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  knowledgeSources KnowledgeSource[]
+  products        Product[]
+  videos          VideoLesson[]
+  conversations   Conversation[]
+  leads           Lead[]
+  paymentProofs   PaymentProof[]
+}
+
+model KnowledgeSource {
+  id        String   @id @default(cuid())
+  agentId   String
+  agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  type      String   // url, pdf, faq, text
+  title     String
+  content   String
+  faqQ      String?
+  faqA      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Product {
+  id            String   @id @default(cuid())
+  agentId       String
+  agent         Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  name          String
+  description   String
+  price         Float
+  comparePrice  Float?
+  category      String?
+  badge         String?
+  rating        Float    @default(0)
+  reviewCount   Int      @default(0)
+  featured      Boolean  @default(false)
+  active        Boolean  @default(true)
+  imageBase64   String?
+  externalUrl   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model VideoLesson {
+  id          String   @id @default(cuid())
+  agentId     String
+  agent       Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  url         String
+  duration    Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Conversation {
+  id           String    @id @default(cuid())
+  agentId      String
+  agent        Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  userId       String?
+  user         User?     @relation(fields: [userId], references: [id])
+  visitorId    String
+  visitorIp    String?
+  startedAt    DateTime  @default(now())
+  lastMsgAt    DateTime  @default(now())
+  messages     Message[]
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String   // user, assistant, system
+  content        String
+  sources        String?  // JSON of cited sources
+  feedback       String?  // up, down
+  feedbackNote   String?
+  createdAt      DateTime @default(now())
+}
+
+model Lead {
+  id          String   @id @default(cuid())
+  agentId     String
+  agent       Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id])
+  visitorId   String?
+  name        String
+  whatsapp    String
+  email       String?
+  interest    String?
+  score       Int      @default(0)
+  vip         Boolean  @default(false)
+  createdAt   DateTime @default(now())
+}
+
+model PaymentProof {
+  id           String   @id @default(cuid())
+  agentId      String
+  agent        Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  visitorId    String
+  imageBase64  String
+  amount       Float?
+  receiver     String?
+  pixKey       String?
+  transaction  String?
+  paidAt       String?
+  bank         String?
+  status       String   @default("pendente") // pendente, aprovado, rejeitado
+  reason       String?
+  leadName     String?
+  leadWhatsapp String?
+  createdAt    DateTime @default(now())
+  reviewedAt   DateTime?
+}
