@@ -1,13 +1,203 @@
-import ZAI from "z-ai-web-dev-sdk";
-import { Agent } from "@prisma/client";
+// Lovon Agente - AI module
+// Migrado de z-ai-web-dev-sdk → Google Gemini 2.0 Flash (free tier)
+// API key: GEMINI_API_KEY (configure na Vercel/env)
 
-let zaiInstance: any = null;
+interface GeminiPart {
+  text?: string;
+  inline_data?: {
+    mime_type: string;
+    data: string;
+  };
+}
 
-async function getZAI() {
-  if (!zaiInstance) {
-    zaiInstance = await ZAI.create();
+interface GeminiContent {
+  role: "user" | "model";
+  parts: GeminiPart[];
+}
+
+interface GeminiRequest {
+  contents: GeminiContent[];
+  systemInstruction?: { parts: { text: string }[] };
+  generationConfig?: {
+    temperature?: number;
+    maxOutputTokens?: number;
+    topP?: number;
+    topK?: number;
+  };
+}
+
+interface GeminiResponse {
+  candidates?: Array<{
+    content?: {
+      parts?: Array<{ text?: string }>;
+      role?: string;
+    };
+    finishReason?: string;
+  }>;
+  error?: { message: string; code: number };
+}
+
+const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+const DEFAULT_MODEL = "gemini-2.0-flash-exp";
+
+function getApiKey(): string {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) {
+    throw new Error(
+      "GEMINI_API_KEY não configurada. Adicione a variável de ambiente GEMINI_API_KEY no painel da Vercel (Settings → Environment Variables)."
+    );
   }
-  return zaiInstance;
+  return key;
+}
+
+async function callGemini(
+  model: string,
+  body: GeminiRequest
+): Promise<string> {
+  const apiKey = getApiKey();
+  const url = `${GEMINI_API_URL}/${model}:generateContent?key=${apiKey}`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Gemini API error (${res.status}): ${errorText}`);
+  }
+
+  const data: GeminiResponse = await res.json();
+  if (data.error) {
+    throw new Error(`Gemini error: ${data.error.message}`);
+  }
+
+  const text = data.candidates?.[0]?.content?.parts
+    ?.map((p) => p.text || "")
+    .join("")
+    .trim();
+
+  return text || "";
+}
+
+// ---- Compat layer: same interface as z-ai-web-dev-sdk used to expose ----
+interface ChatMessageInput {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+interface ChatCompletionRequest {
+  messages: ChatMessageInput[];
+  temperature?: number;
+  max_tokens?: number;
+  model?: string;
+}
+
+interface ChatCompletionResponse {
+  choices: Array<{
+    message: { role: string; content: string };
+  }>;
+}
+
+function messagesToGemini(messages: ChatMessageInput[]): {
+  systemInstruction?: { parts: { text: string }[] };
+  contents: GeminiContent[];
+} {
+  let systemInstruction: { parts: { text: string }[] } | undefined;
+  const contents: GeminiContent[] = [];
+
+  for (const msg of messages) {
+    if (msg.role === "system") {
+      systemInstruction = { parts: [{ text: msg.content }] };
+    } else {
+      contents.push({
+        role: msg.role === "assistant" ? "model" : "user",
+        parts: [{ text: msg.content }],
+      });
+    }
+  }
+
+  return { systemInstruction, contents };
+}
+
+function multimodalToGemini(messages: ChatMessageInput[]): GeminiContent[] {
+  // Convert OpenAI-style multimodal messages to Gemini format
+  const contents: GeminiContent[] = [];
+  for (const msg of messages) {
+    const content = msg.content as any;
+    if (typeof content === "string") {
+      contents.push({
+        role: msg.role === "assistant" ? "model" : "user",
+        parts: [{ text: content }],
+      });
+    } else if (Array.isArray(content)) {
+      // OpenAI multimodal: [{type:"text", text:...}, {type:"image_url", image_url:{url:data:image/...;base64,...}}]
+      const parts: GeminiPart[] = [];
+      for (const item of content) {
+        if (item.type === "text") {
+          parts.push({ text: item.text });
+        } else if (item.type === "image_url") {
+          const url = item.image_url?.url || "";
+          const match = url.match(/^data:(image\/[a-z]+);base64,(.+)$/);
+          if (match) {
+            parts.push({
+              inline_data: {
+                mime_type: match[1],
+                data: match[2],
+              },
+            });
+          }
+        }
+      }
+      contents.push({
+        role: msg.role === "assistant" ? "model" : "user",
+        parts,
+      });
+    }
+  }
+  return contents;
+}
+
+// Compat object mimicking z-ai-web-dev-sdk chat.completions.create
+const zaiCompat = {
+  chat: {
+    completions: {
+      create: async (req: ChatCompletionRequest): Promise<ChatCompletionResponse> => {
+        const { systemInstruction, contents } = messagesToGemini(req.messages);
+        const text = await callGemini(req.model || DEFAULT_MODEL, {
+          contents,
+          systemInstruction,
+          generationConfig: {
+            temperature: req.temperature ?? 0.6,
+            maxOutputTokens: req.max_tokens ?? 600,
+          },
+        });
+        return {
+          choices: [{ message: { role: "assistant", content: text } }],
+        };
+      },
+      createVision: async (req: any): Promise<ChatCompletionResponse> => {
+        const contents = multimodalToGemini(req.messages);
+        const text = await callGemini(DEFAULT_MODEL, {
+          contents,
+          generationConfig: {
+            temperature: 0.2,
+            maxOutputTokens: 800,
+          },
+        });
+        return {
+          choices: [{ message: { role: "assistant", content: text } }],
+        };
+      },
+    },
+  },
+};
+
+// ---- Public API (same as before, unchanged signature) ----
+export interface ChatMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
 }
 
 const CREATIVITY_TEMP: Record<string, number> = {
@@ -31,17 +221,17 @@ const EMOTION_INSTRUCTIONS: Record<string, string> = {
   calmo: "Mantenha um tom calmo e tranquilizador.",
 };
 
-export interface ChatMessage {
-  role: "system" | "user" | "assistant";
-  content: string;
-}
-
-export function buildSystemPrompt(agent: Agent, ragContext: string): string {
+export function buildSystemPrompt(agent: any, ragContext: string): string {
   const languages = (agent.languages || "pt").split(",").join(", ");
-  const styleText = STYLE_INSTRUCTIONS[agent.personaStyle] || STYLE_INSTRUCTIONS.amigavel;
-  const emotionText = EMOTION_INSTRUCTIONS[agent.personaEmotion] || EMOTION_INSTRUCTIONS.neutro;
+  const styleText =
+    STYLE_INSTRUCTIONS[agent.personaStyle as string] || STYLE_INSTRUCTIONS.amigavel;
+  const emotionText =
+    EMOTION_INSTRUCTIONS[agent.personaEmotion as string] ||
+    EMOTION_INSTRUCTIONS.neutro;
 
-  let prompt = `Você é ${agent.personaName}, ${agent.personaRole}.${agent.personaDesc ? ` ${agent.personaDesc}` : ""}
+  let prompt = `Você é ${agent.personaName}, ${agent.personaRole}.${
+    agent.personaDesc ? ` ${agent.personaDesc}` : ""
+  }
 
 ${styleText}
 ${emotionText}
@@ -75,7 +265,6 @@ export async function chatComplete(
   history: ChatMessage[],
   userMessage: string
 ): Promise<string> {
-  const zai = await getZAI();
   const messages: ChatMessage[] = [
     { role: "system", content: systemPrompt },
     ...history.slice(-8),
@@ -86,17 +275,17 @@ export async function chatComplete(
   let lastError: any;
   while (attempts < 3) {
     try {
-      const completion = await zai.chat.completions.create({
+      const completion = await zaiCompat.chat.completions.create({
         messages,
         temperature: CREATIVITY_TEMP["media"],
         max_tokens: 600,
-        thinking: { type: "disabled" },
       });
       const content = completion.choices?.[0]?.message?.content;
       return content || "Não consegui gerar uma resposta. Tente reformular sua pergunta.";
     } catch (err: any) {
       lastError = err;
-      if (err?.status === 429 || err?.message?.includes("429")) {
+      const msg = String(err?.message || err);
+      if (msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED")) {
         attempts++;
         await new Promise((r) => setTimeout(r, 1000 * attempts));
         continue;
@@ -120,8 +309,10 @@ export interface PixVerificationResult {
   observations: string;
 }
 
-export async function verifyPixReceipt(imageBase64: string, expectedAmount?: number): Promise<PixVerificationResult> {
-  const zai = await getZAI();
+export async function verifyPixReceipt(
+  imageBase64: string,
+  expectedAmount?: number
+): Promise<PixVerificationResult> {
   let imageData = imageBase64;
   if (!imageData.startsWith("data:image")) {
     imageData = `data:image/jpeg;base64,${imageData}`;
@@ -141,13 +332,16 @@ export async function verifyPixReceipt(imageBase64: string, expectedAmount?: num
   "observations": observações sobre a verificação
 }
 
-${expectedAmount ? `O valor esperado é R$ ${expectedAmount.toFixed(2)}. Verifique se o valor pago corresponde.` : ""}
+${
+    expectedAmount
+      ? `O valor esperado é R$ ${expectedAmount.toFixed(2)}. Verifique se o valor pago corresponde.`
+      : ""
+  }
 
 Retorne APENAS o JSON, sem texto adicional.`;
 
   try {
-    const completion = await zai.chat.completions.create({
-      model: "glm-4v",
+    const completion = await zaiCompat.chat.completions.createVision({
       messages: [
         {
           role: "user",
@@ -157,7 +351,6 @@ Retorne APENAS o JSON, sem texto adicional.`;
           ],
         },
       ],
-      thinking: { type: "disabled" },
     } as any);
 
     const content = completion.choices?.[0]?.message?.content || "";
@@ -177,7 +370,7 @@ Retorne APENAS o JSON, sem texto adicional.`;
       };
     }
   } catch (err) {
-    // fall through to default
+    console.error("[verifyPixReceipt] error:", err);
   }
 
   return {

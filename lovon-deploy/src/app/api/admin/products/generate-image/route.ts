@@ -1,13 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
-import ZAI from "z-ai-web-dev-sdk";
 
-let zaiInstance: any = null;
-async function getZAI() {
-  if (!zaiInstance) zaiInstance = await ZAI.create();
-  return zaiInstance;
-}
+// Geração de imagem via Pollinations.ai (free, sem API key)
+// Docs: https://pollinations.ai/
 
 export async function POST(req: NextRequest) {
   const user = await getCurrentUser();
@@ -32,13 +28,30 @@ export async function POST(req: NextRequest) {
   const prompt = `${product.name}: ${product.description}. ${style}, high quality, clean minimal design`;
 
   try {
-    const zai = await getZAI();
-    const response = await zai.images.generations.create({ prompt, size: "1024x1024" });
-    const base64 = response.data[0].base64;
+    // Pollinations retorna a imagem direto via GET
+    const encodedPrompt = encodeURIComponent(prompt);
+    const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1024&height=1024&nologo=true&model=flux`;
+
+    const imgRes = await fetch(url, { cache: "no-store" });
+    if (!imgRes.ok) {
+      throw new Error(`Pollinations returned ${imgRes.status}`);
+    }
+
+    const arrayBuffer = await imgRes.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString("base64");
     const dataUrl = `data:image/png;base64,${base64}`;
-    await db.product.update({ where: { id: product.id }, data: { imageBase64: dataUrl } });
+
+    await db.product.update({
+      where: { id: product.id },
+      data: { imageBase64: dataUrl },
+    });
+
     return NextResponse.json({ ok: true, imageBase64: dataUrl });
   } catch (e: any) {
-    return NextResponse.json({ error: e.message || "Falha ao gerar imagem" }, { status: 500 });
+    console.error("[generate-image] error:", e);
+    return NextResponse.json(
+      { error: e.message || "Falha ao gerar imagem" },
+      { status: 500 }
+    );
   }
 }
