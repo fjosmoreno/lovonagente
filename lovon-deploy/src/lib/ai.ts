@@ -57,11 +57,16 @@ async function callGemini(
   const apiKey = getApiKey();
   const url = `${GEMINI_API_URL}/${model}:generateContent?key=${apiKey}`;
 
+  // 25s timeout — Vercel functions have 30s max on free plan
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 25_000);
+
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-  });
+    signal: controller.signal,
+  }).finally(() => clearTimeout(timeout));
 
   if (!res.ok) {
     const errorText = await res.text();
@@ -292,7 +297,9 @@ export async function chatComplete(
         await new Promise((r) => setTimeout(r, 1000 * attempts));
         continue;
       }
-      throw err;
+      // Return error message directly so user can see it on screen for debugging
+      const errMsg = err?.message || String(err);
+      return `⚠️ [DEBUG Gemini error] ${errMsg.slice(0, 500)}`;
     }
   }
   throw lastError;
