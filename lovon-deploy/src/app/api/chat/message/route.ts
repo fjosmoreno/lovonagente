@@ -56,6 +56,8 @@ export async function POST(req: NextRequest) {
       try {
         reply = await chatComplete(systemPrompt, hist, message);
       } catch (e: any) {
+        console.error("[chat/message] Gemini error:", e?.message || e);
+        console.error("[chat/message] Full error:", JSON.stringify(e, null, 2));
         reply = "Tive um problema para gerar a resposta agora. Pode tentar novamente em instantes?";
       }
       sources = rag.sources.map((s) => ({ id: s.id, title: s.title, type: s.type }));

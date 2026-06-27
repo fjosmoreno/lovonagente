@@ -284,6 +284,8 @@ export async function chatComplete(
       return content || "Não consegui gerar uma resposta. Tente reformular sua pergunta.";
     } catch (err: any) {
       lastError = err;
+      console.error("[chatComplete] Gemini API error:", err?.message || err);
+      console.error("[chatComplete] Status:", err?.status);
       const msg = String(err?.message || err);
       if (msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED")) {
         attempts++;
