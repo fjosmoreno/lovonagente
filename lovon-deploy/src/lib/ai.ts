@@ -38,7 +38,7 @@ interface GeminiResponse {
 }
 
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models";
-const DEFAULT_MODEL = "gemini-2.0-flash-exp";
+const DEFAULT_MODEL = "gemini-2.5-flash";
 
 function getApiKey(): string {
   const key = process.env.GEMINI_API_KEY;
