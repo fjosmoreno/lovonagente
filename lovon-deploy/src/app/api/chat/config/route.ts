@@ -8,10 +8,11 @@ export async function GET(req: NextRequest) {
   const agent = await db.agent.findUnique({ where: { handle: handle.toLowerCase() } });
   if (!agent) return NextResponse.json({ error: "Agente não encontrado" }, { status: 404 });
 
-  // Public-safe config. PIX key is intentionally exposed because the buyer
-  // needs it to actually pay (it would be shown in the PIX QR/copy instructions
-  // anyway — there's no security in hiding a key that gets sent to the user's
-  // bank app). pixWhatsapp stays server-side (only revealed after proof approval).
+  // Public-safe config. PIX key + WhatsApp are intentionally exposed because:
+//   - The PIX key needs to be visible to the buyer to actually pay.
+//   - The WhatsApp is the buyer's only way to reach the seller to confirm
+//     the order and send proof. If it's not configured, the cart UI will
+//     fall back to a direct proof upload flow.
   return NextResponse.json({
     config: {
       handle: agent.handle,
@@ -31,6 +32,7 @@ export async function GET(req: NextRequest) {
       pixReceiverName: agent.pixReceiverName,
       pixBank: agent.pixBank,
       pixInstructions: agent.pixInstructions,
+      pixWhatsapp: agent.pixWhatsapp,
       vipEnabled: agent.vipEnabled,
     },
   });

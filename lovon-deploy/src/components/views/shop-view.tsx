@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { Search, MessageCircle, Star, ShoppingCart, ExternalLink, X, Send, Sparkles, Loader2, ShieldCheck, Package, Trash2, Plus, Minus, ArrowRight } from "lucide-react";
+import { Search, MessageCircle, Star, ShoppingCart, ExternalLink, X, Send, Sparkles, Loader2, ShieldCheck, Package, Trash2, Plus, Minus, ArrowRight, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { ChatView } from "./chat-view";
 import { createCartStore } from "@/lib/cart-store";
@@ -226,8 +226,14 @@ export function ShopView({ handle }: { handle: string }) {
         total={cartTotal}
         onRemove={cart.remove}
         onSetQty={cart.setQty}
-        onCheckout={() => { setCartOpen(false); setChatOpen(true); }}
         onClear={cart.clear}
+        agentWhatsapp={agent.pixWhatsapp}
+        pixKey={agent.pixKey}
+        pixReceiverName={agent.pixReceiverName}
+        pixBank={agent.pixBank}
+        pixAmount={agent.pixAmount}
+        pixEnabled={agent.pixEnabled}
+        handle={handle}
         primaryColor={agent.primaryColor}
       />
 
@@ -414,11 +420,98 @@ interface CartDrawerProps {
   onRemove: (id: string) => void;
   onSetQty: (id: string, qty: number) => void;
   onClear: () => void;
-  onCheckout: () => void;
   primaryColor?: string;
+  agentWhatsapp?: string;
+  pixKey?: string;
+  pixReceiverName?: string;
+  pixBank?: string;
+  pixAmount?: number;
+  pixEnabled?: boolean;
+  handle: string;
 }
 
-function CartDrawer({ open, onClose, items, total, onRemove, onSetQty, onClear, onCheckout, primaryColor }: CartDrawerProps) {
+function CartDrawer({
+  open, onClose, items, total, onRemove, onSetQty, onClear, primaryColor,
+  agentWhatsapp, pixKey, pixReceiverName, pixBank, pixAmount, pixEnabled, handle,
+}: CartDrawerProps) {
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [proofPreview, setProofPreview] = useState<string | null>(null);
+  const [visitorId, setVisitorId] = useState<string>("");
+  const [done, setDone] = useState(false);
+  const [approved, setApproved] = useState(false);
+  const fileRef = React.useRef<HTMLInputElement>(null);
+
+  // Lazy visitor id (matches chat-view pattern)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const vid = localStorage.getItem("lovon_visitor") || `v-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    localStorage.setItem("lovon_visitor", vid);
+    setVisitorId(vid);
+  }, []);
+
+  function buildWhatsappMessage(): string {
+    const lines: string[] = [];
+    lines.push(`Olá! Quero finalizar a compra na loja do *${handle}*:`);
+    lines.push("");
+    items.forEach((it) => {
+      const subtotal = (it.price * it.qty).toFixed(2);
+      lines.push(`• ${it.name}${it.qty > 1 ? ` (x${it.qty})` : ""} — R$ ${subtotal}`);
+    });
+    lines.push("");
+    lines.push(`*Total: R$ ${total.toFixed(2)}*`);
+    if (pixKey) {
+      lines.push("");
+      lines.push("Vou fazer o PIX agora. Pode confirmar?");
+    }
+    return lines.join("\n");
+  }
+
+  function openWhatsapp() {
+    if (!agentWhatsapp) {
+      toast.error("WhatsApp do vendedor não configurado. Use o envio de comprovante abaixo.");
+      return;
+    }
+    const phone = agentWhatsapp.replace(/\D/g, "");
+    const text = encodeURIComponent(buildWhatsappMessage());
+    const url = `https://wa.me/${phone}?text=${text}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+    toast.success("Abrindo WhatsApp...");
+  }
+
+  async function handleProofUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { toast.error("Apenas imagens (JPG/PNG/WebP)"); return; }
+    if (file.size > 5 * 1024 * 1024) { toast.error("Máx 5MB"); return; }
+    setUploading(true);
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const base64 = reader.result as string;
+      setProofPreview(base64);
+      try {
+        const res = await fetch("/api/chat/payment", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ handle, imageBase64: base64, visitorId, leadName: "", leadWhatsapp: "" }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Erro no envio");
+        setApproved(!!data.approved);
+        setDone(true);
+        toast[data.approved ? "success" : "info"](
+          data.approved ? "Pagamento confirmado!" : "Comprovante recebido! Aguardando aprovação."
+        );
+      } catch (e: any) {
+        toast.error(e.message || "Falha no envio");
+        setProofPreview(null);
+      } finally {
+        setUploading(false);
+      }
+    };
+    reader.readAsDataURL(file);
+  }
   return (
     <div className={`fixed inset-0 z-[55] transition-opacity duration-200 ${open ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"}`} aria-hidden={!open}>
       {/* backdrop */}
@@ -497,10 +590,73 @@ function CartDrawer({ open, onClose, items, total, onRemove, onSetQty, onClear, 
                 <span className="text-base font-black text-foreground">R$ {total.toFixed(2)}</span>
               </div>
             </div>
-            <Button className="w-full h-12 text-sm font-semibold shadow-md" style={{ background: primaryColor || "#FF6600" }} onClick={onCheckout}>
-              Finalizar compra pelo agente <ArrowRight className="w-4 h-4 ml-2" />
+
+            {/* PIX info — show chave if available so the buyer can copy and pay */}
+            {pixEnabled && pixKey && (
+              <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs space-y-1">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="font-semibold text-foreground">Pagar via PIX</div>
+                    <div className="text-muted-foreground truncate">{pixReceiverName || "Recebedor"}{pixBank ? ` • ${pixBank}` : ""}</div>
+                  </div>
+                  {pixAmount && <div className="font-bold text-foreground shrink-0">R$ {pixAmount.toFixed(2)}</div>}
+                </div>
+                <button
+                  onClick={() => {
+                    try {
+                      navigator.clipboard?.writeText(pixKey);
+                      toast.success("Chave PIX copiada!");
+                    } catch {
+                      toast.error("Não consegui copiar. Anote manualmente: " + pixKey);
+                    }
+                  }}
+                  className="w-full text-left font-mono text-[11px] bg-background border border-border rounded px-2 py-1.5 truncate hover:border-primary transition-colors"
+                  title={pixKey}
+                >
+                  {pixKey}
+                </button>
+              </div>
+            )}
+
+            {/* Primary CTA — open WhatsApp with the order pre-formatted */}
+            <Button
+              className="w-full h-12 text-sm font-semibold shadow-md"
+              style={{ background: "#25D366" }}
+              onClick={openWhatsapp}
+              disabled={!agentWhatsapp}
+            >
+              <MessageCircle className="w-4 h-4 mr-2" />
+              {agentWhatsapp ? "Finalizar no WhatsApp" : "WhatsApp não configurado"}
             </Button>
-            <p className="text-[10px] text-center text-muted-foreground">O pagamento é processado pelo agente via PIX. Após confirmar, você recebe o acesso na hora.</p>
+
+            {/* Secondary CTA — direct proof upload without leaving the shop */}
+            <input id="lovon-shop-proof" ref={fileRef} type="file" accept="image/*" onChange={handleProofUpload} disabled={uploading} className="sr-only" />
+            <label
+              htmlFor="lovon-shop-proof"
+              className={`flex items-center justify-center w-full h-10 rounded-md text-xs font-medium border border-border bg-background hover:bg-accent transition-colors cursor-pointer ${uploading ? "opacity-60 pointer-events-none" : ""}`}
+            >
+              {uploading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Upload className="w-4 h-4 mr-2" />}
+              {proofPreview ? "Trocar comprovante" : "Já paguei — enviar comprovante"}
+            </label>
+
+            {proofPreview && (
+              <div className="rounded-lg border border-border bg-background p-2 flex items-center gap-2">
+                <img src={proofPreview} alt="Comprovante" className="w-10 h-10 rounded object-cover border border-border" />
+                <div className="flex-1 min-w-0 text-xs">
+                  {done ? (
+                    <span className={approved ? "text-emerald-500 font-medium" : "text-muted-foreground"}>
+                      {approved ? "✓ Pagamento confirmado!" : "⏳ Aguardando aprovação"}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">Comprovante selecionado</span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <p className="text-[10px] text-center text-muted-foreground">
+              Pague o PIX acima e toque em <strong>Finalizar no WhatsApp</strong> pra enviar a lista ao vendedor. Após confirmar, você recebe o acesso na hora.
+            </p>
           </div>
         )}
       </div>

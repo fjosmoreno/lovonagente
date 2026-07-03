@@ -36,6 +36,7 @@ interface ChatConfig {
   pixReceiverName?: string;
   pixBank?: string;
   pixInstructions: string;
+  pixWhatsapp?: string;
   vipEnabled: boolean;
 }
 
@@ -53,6 +54,8 @@ export function ChatView({ handle }: { handle: string }) {
   const [vipName, setVipName] = useState("");
   const [vipPhone, setVipPhone] = useState("");
   const [whatsapp, setWhatsapp] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [proofPreview, setProofPreview] = useState<string | null>(null);
   const [showLeadForm, setShowLeadForm] = useState(false);
   const [leadSubmitted, setLeadSubmitted] = useState(false);
   const [leadName, setLeadName] = useState("");
@@ -199,14 +202,16 @@ export function ChatView({ handle }: { handle: string }) {
 
   async function handlePaymentUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
+    // Always reset so re-uploading the same file works
+    e.target.value = "";
     if (!file) return;
-    // Validate file size before reading (5MB max)
+    if (!file.type.startsWith("image/")) { toast.error("Apenas imagens são aceitas (JPG/PNG/WebP)"); return; }
     if (file.size > 5 * 1024 * 1024) { toast.error("Imagem muito grande (máx 5MB)"); return; }
-    // Validate file type
-    if (!file.type.startsWith("image/")) { toast.error("Apenas imagens são aceitas"); return; }
+    setUploading(true);
     const reader = new FileReader();
     reader.onload = async () => {
       const base64 = reader.result as string;
+      setProofPreview(base64);
       toast.info("Analisando comprovante com IA...");
       try {
         const res = await fetch("/api/chat/payment", {
@@ -215,7 +220,7 @@ export function ChatView({ handle }: { handle: string }) {
           body: JSON.stringify({ handle, imageBase64: base64, visitorId, leadName: vipName, leadWhatsapp: vipPhone }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error);
+        if (!res.ok) throw new Error(data.error || "Erro no envio");
         if (data.approved) {
           setWhatsapp(data.whatsapp);
           setVipStep("done");
@@ -225,8 +230,16 @@ export function ChatView({ handle }: { handle: string }) {
           toast.info("Comprovante recebido! Aguardando aprovação manual.");
         }
       } catch (e: any) {
-        toast.error(e.message);
+        toast.error(e.message || "Falha no envio do comprovante");
+        setProofPreview(null);
+      } finally {
+        setUploading(false);
       }
+    };
+    reader.onerror = () => {
+      toast.error("Falha ao ler o arquivo");
+      setUploading(false);
+      setProofPreview(null);
     };
     reader.readAsDataURL(file);
   }
@@ -410,10 +423,30 @@ export function ChatView({ handle }: { handle: string }) {
                     .replace("{nome}", config.pixReceiverName || "")}
                 </div>
                 <Button variant="outline" className="w-full" onClick={copyPix}><Copy className="w-4 h-4 mr-2" /> Copiar chave PIX</Button>
-                <Button className="w-full" style={{ background: primary }} onClick={() => fileRef.current?.click()}>
-                  <Upload className="w-4 h-4 mr-2" /> Enviar comprovante
-                </Button>
-                <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handlePaymentUpload} />
+
+                {/* Proof preview after selection */}
+                {proofPreview && (
+                  <div className="rounded-lg border border-border bg-background p-2 animate-fade-in-up">
+                    <div className="flex items-center gap-2">
+                      <img src={proofPreview} alt="Comprovante" className="w-12 h-12 rounded-md object-cover border border-border" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-medium">Comprovante selecionado</div>
+                        <div className="text-[10px] text-muted-foreground">
+                          {uploading ? <span className="flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Enviando e analisando...</span> : "Pronto para enviar"}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Use a real label + input id so the file picker opens reliably across all browsers (incl. iOS Safari).
+                    Hidden input is at the same DOM level as the label, not nested inside a button. */}
+                <input id="lovon-payment-upload" ref={fileRef} type="file" accept="image/*" onChange={handlePaymentUpload} disabled={uploading} className="sr-only" />
+                <label htmlFor="lovon-payment-upload" className={`flex items-center justify-center w-full h-10 rounded-md text-sm font-medium cursor-pointer transition-all ${uploading ? "opacity-60 pointer-events-none" : ""}`} style={{ background: primary, color: "#fff"}}>
+                  {uploading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Upload className="w-4 h-4 mr-2" />}
+                  {proofPreview ? "Trocar comprovante" : "Enviar comprovante"}
+                </label>
+                <p className="text-[10px] text-muted-foreground text-center">JPG, PNG ou WebP até 5MB</p>
               </div>
             )}
 

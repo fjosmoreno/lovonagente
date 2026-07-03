@@ -104,3 +104,4 @@ now.json
 .eslintcache
 .cache/
 .parcel-cache/
+.env*
