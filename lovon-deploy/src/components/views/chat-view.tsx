@@ -32,6 +32,7 @@ interface ChatConfig {
   leadCapture: boolean;
   pixEnabled: boolean;
   pixAmount: number;
+  pixKey?: string;
   pixReceiverName?: string;
   pixBank?: string;
   pixInstructions: string;
@@ -167,10 +168,33 @@ export function ChatView({ handle }: { handle: string }) {
   }
 
   function copyPix() {
-    if (config?.pixKey) {
-      navigator.clipboard.writeText(config.pixKey);
-      toast.success("Chave PIX copiada!");
+    const key = config?.pixKey;
+    if (!key) {
+      toast.error("Chave PIX não configurada pelo vendedor");
+      return;
     }
+    // Fallback for browsers without clipboard API or insecure context
+    try {
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(key).catch(() => fallbackCopy(key));
+      } else {
+        fallbackCopy(key);
+      }
+      toast.success("Chave PIX copiada!");
+    } catch {
+      fallbackCopy(key);
+    }
+  }
+
+  function fallbackCopy(text: string) {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); } catch {}
+    document.body.removeChild(ta);
   }
 
   async function handlePaymentUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -208,7 +232,7 @@ export function ChatView({ handle }: { handle: string }) {
   }
 
   if (!config) {
-    return <div className="min-h-screen flex items-center justify-center bg-background"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>;
+    return <div className="h-full flex items-center justify-center bg-background"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>;
   }
 
   const primary = config.primaryColor || "#FF6600";
@@ -222,7 +246,7 @@ export function ChatView({ handle }: { handle: string }) {
   ];
 
   return (
-    <div className="min-h-screen flex flex-col bg-background relative">
+    <div className="h-full flex flex-col bg-background relative">
       {/* Subtle background gradient */}
       <div
         className="fixed inset-0 pointer-events-none opacity-60"
@@ -379,10 +403,10 @@ export function ChatView({ handle }: { handle: string }) {
 
             {vipStep === "pix" && config.pixEnabled && (
               <div className="space-y-3">
-                <div className="rounded-lg bg-muted p-3 text-sm">
-                  {config.pixInstructions
-                    .replace("{valor}", `R$ ${config.pixAmount.toFixed(2)}`)
-                    .replace("{chave}", config.pixKey || "")
+                <div className="rounded-lg bg-muted p-3 text-sm whitespace-pre-wrap">
+                  {(config.pixInstructions || "Pague {valor} para a chave PIX {chave} ({nome}).")
+                    .replace("{valor}", `R$ ${(config.pixAmount || 0).toFixed(2)}`)
+                    .replace("{chave}", config.pixKey || "(chave não configurada)")
                     .replace("{nome}", config.pixReceiverName || "")}
                 </div>
                 <Button variant="outline" className="w-full" onClick={copyPix}><Copy className="w-4 h-4 mr-2" /> Copiar chave PIX</Button>

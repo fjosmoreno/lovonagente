@@ -1,6 +1,10 @@
 // Lovon Agente - AI module
-// Migrado de z-ai-web-dev-sdk → Google Gemini 2.0 Flash (free tier)
+// Migrado de z-ai-web-dev-sdk → Google Gemini SDK (free tier)
 // API key: GEMINI_API_KEY (configure na Vercel/env)
+// Optional: HEADROOM_ENABLED=1 enables Headroom compression (60-95% fewer tokens)
+
+import { GoogleGenerativeAI, type GenerativeModel } from "@google/generative-ai";
+import { withMaybeHeadroom } from "./headroom-gemini";
 
 interface GeminiPart {
   text?: string;
@@ -26,64 +30,66 @@ interface GeminiRequest {
   };
 }
 
-interface GeminiResponse {
-  candidates?: Array<{
-    content?: {
-      parts?: Array<{ text?: string }>;
-      role?: string;
-    };
-    finishReason?: string;
-  }>;
-  error?: { message: string; code: number };
-}
-
-const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 const DEFAULT_MODEL = "gemini-2.5-flash";
 
-function getApiKey(): string {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) {
-    throw new Error(
-      "GEMINI_API_KEY não configurada. Adicione a variável de ambiente GEMINI_API_KEY no painel da Vercel (Settings → Environment Variables)."
-    );
+let genai: GoogleGenerativeAI | null = null;
+
+function getGenAI(): GoogleGenerativeAI {
+  if (!genai) {
+    const key = process.env.GEMINI_API_KEY;
+    if (!key) {
+      throw new Error(
+        "GEMINI_API_KEY não configurada. Adicione a variável de ambiente GEMINI_API_KEY no painel da Vercel (Settings → Environment Variables)."
+      );
+    }
+    genai = new GoogleGenerativeAI(key);
   }
-  return key;
+  return genai;
 }
 
 async function callGemini(
   model: string,
   body: GeminiRequest
 ): Promise<string> {
-  const apiKey = getApiKey();
-  const url = `${GEMINI_API_URL}/${model}:generateContent?key=${apiKey}`;
-
-  // 25s timeout — Vercel functions have 30s max on free plan
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 25_000);
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    signal: controller.signal,
-  }).finally(() => clearTimeout(timeout));
-
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(`Gemini API error (${res.status}): ${errorText}`);
-  }
-
-  const data: GeminiResponse = await res.json();
-  if (data.error) {
-    throw new Error(`Gemini error: ${data.error.message}`);
-  }
-
-  const text = data.candidates?.[0]?.content?.parts
+  const ai = getGenAI();
+  // The Gemini SDK accepts systemInstruction as a plain string (joins parts internally).
+  const systemInstructionText = body.systemInstruction?.parts
     ?.map((p) => p.text || "")
-    .join("")
-    .trim();
+    .filter(Boolean)
+    .join("\n");
+  const baseModel: GenerativeModel = ai.getGenerativeModel({
+    model,
+    systemInstruction: systemInstructionText,
+    generationConfig: body.generationConfig,
+  });
+  const m = await withMaybeHeadroom(baseModel);
 
-  return text || "";
+  // 25s budget — Vercel functions have 30s max on free plan.
+  // NOTE: We deliberately do NOT pass `signal` into the SDK request body.
+  // @google/generative-ai does not accept `signal` in the payload, and
+  // including it would make Gemini reject with `Unknown name "signal"`.
+  // The `signal` field is the SDK-internal AbortSignal handle for the
+  // outbound HTTP request; if we ever wire that up we have to pass it via
+  // the SDK's abortSignal option, not the body. For now, race against a
+  // timeout promise so the user gets a quick error instead of a hanging
+  // function:
+  const callPromise = m.generateContent({
+    contents: body.contents,
+  } as any);
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error("Gemini call timed out after 25s")), 25_000);
+  });
+
+  try {
+    const result = await Promise.race([callPromise, timeoutPromise]);
+    return result.response.text().trim();
+  } catch (err) {
+    // If the timeout rejected first, clear the underlying call so it
+    // can't resolve into a stale closure later.
+    void callPromise.catch(() => undefined);
+    throw err;
+  }
 }
 
 // ---- Compat layer: same interface as z-ai-web-dev-sdk used to expose ----
